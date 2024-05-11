@@ -1,15 +1,10 @@
-from sd.encoder import VAE_Encoder
-from sd.decoder import VAE_Decoder
-from argparse import ArgumentParser
+from sd.encoder import Encoder
+from sd.decoder import Decoder
 
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normalize, ToTensor
 
-from torch.utils.data import DataLoader
-from torch import randn, save, load, no_grad
-from torch.optim import Adam
-
-from tqdm import tqdm
+from torch import randn, load, no_grad, randint
 
 import matplotlib.pyplot as plt
 
@@ -19,21 +14,21 @@ if __name__ == "__main__":
     device = "cuda:1"
     transforms = [
         ToTensor(),
-        Resize((128, 128)),
+        Resize((256, 256)),
         Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         RandomHorizontalFlip()
     ]
 
-    dataset = ImageFolder("data/train", Compose(transforms))
-    encoder = VAE_Encoder().to(device)
+    dataset = ImageFolder("data/celeba", Compose(transforms))
+    encoder = Encoder().to(device)
     if exists("encoder.pt"):
         encoder.load_state_dict(load("encoder.pt"))
-    decoder = VAE_Decoder().to(device)
+    decoder = Decoder().to(device)
     if exists("decoder.pt"):
         decoder.load_state_dict(load("decoder.pt"))
 
     with no_grad():
-        img, _ = dataset[0]
+        img, _ = dataset[randint(0, len(dataset) - 1, (1,))]
         _, ax = plt.subplots(1, 2, figsize = (8, 16))
         noise = randn((1, 4, 32, 32)).to(device)
         enc = encoder(img.unsqueeze(0).to(device), noise)
