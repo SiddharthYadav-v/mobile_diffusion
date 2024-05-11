@@ -1,5 +1,5 @@
-from sd.encoder import Encoder
-from sd.decoder import Decoder
+from md.encoder import Encoder
+from md.decoder import Decoder
 
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normalize, ToTensor

@@ -1,5 +1,5 @@
-from sd.encoder import Encoder
-from sd.decoder import Decoder
+from md.encoder import Encoder
+from md.decoder import Decoder
 
 from argparse import ArgumentParser
 
