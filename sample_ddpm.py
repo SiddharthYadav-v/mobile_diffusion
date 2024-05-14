@@ -5,7 +5,7 @@ from md.diffusion import DDPM
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normalize, ToTensor
 
-from torch import randn, load, no_grad, randint
+from torch import randn, load, no_grad, min as minimum, max as maximum
 
 import matplotlib.pyplot as plt
 
@@ -28,13 +28,19 @@ if __name__ == "__main__":
     if exists("decoder.pt"):
         decoder.load_state_dict(load("decoder.pt", map_location = device))
     ddpm = DDPM(4, 1000, 512, 128).to(device)
-    # if exists("ddpm.pt"):
-    #     ddpm.load_state_dict(load("ddpm.pt", map_location = device))
+    if exists("ddpm.pt"):
+        ddpm.load_state_dict(load("ddpm.pt", map_location = device))
+        
+    total_params = sum(param.numel() for param in encoder.parameters()) + sum(param.numel() for param in decoder.parameters()) + sum(param.numel() for param in ddpm.parameters())
+    print ("Total parameters :", total_params)
 
     with no_grad():
         noise = randn((1, 4, 32, 32)).to(device) * 0.18215
         img = ddpm.sample(noise, device)
         dec = decoder(img)
-        plt.imshow(dec[0].cpu().numpy().transpose(1, 2, 0))
+        disp = dec[0]
+        disp -= minimum(disp)
+        disp /= maximum(disp)
+        plt.imshow(disp.cpu().numpy().transpose(1, 2, 0))
         plt.savefig("ddpm.png")
         plt.close()
