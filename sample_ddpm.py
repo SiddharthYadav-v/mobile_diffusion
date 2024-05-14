@@ -1,5 +1,6 @@
 from md.encoder import Encoder
 from md.decoder import Decoder
+from md.diffusion import DDPM
 
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normalize, ToTensor
@@ -19,21 +20,21 @@ if __name__ == "__main__":
         RandomHorizontalFlip()
     ]
 
-    dataset = ImageFolder("data/CelebAMask-HQ/CelebA-HQ-img", Compose(transforms))
+    dataset = ImageFolder("data/celeba", Compose(transforms))
     encoder = Encoder().to(device)
     if exists("encoder.pt"):
         encoder.load_state_dict(load("encoder.pt", map_location = device))
     decoder = Decoder().to(device)
     if exists("decoder.pt"):
         decoder.load_state_dict(load("decoder.pt", map_location = device))
+    ddpm = DDPM(4, 1000, 512, 128).to(device)
+    # if exists("ddpm.pt"):
+    #     ddpm.load_state_dict(load("ddpm.pt", map_location = device))
 
     with no_grad():
-        img, _ = dataset[randint(0, len(dataset) - 1, (1,))]
-        _, ax = plt.subplots(1, 2, figsize = (8, 16))
-        noise = randn((1, 4, 32, 32)).to(device)
-        enc = encoder(img.unsqueeze(0).to(device), noise)
-        dec = decoder(enc)
-        ax[0].imshow((img.cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-        ax[1].imshow((dec[0].cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-        plt.savefig("reconstruction.png")
+        noise = randn((1, 4, 32, 32)).to(device) * 0.18215
+        img = ddpm.sample(noise, device)
+        dec = decoder(img)
+        plt.imshow(dec[0].cpu().numpy().transpose(1, 2, 0))
+        plt.savefig("ddpm.png")
         plt.close()

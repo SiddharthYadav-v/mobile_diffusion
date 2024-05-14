@@ -41,7 +41,7 @@ class Encoder(nn.Sequential):
         std_dev = var.sqrt()
         x = mean + std_dev * noise
         
-        self.kl = -1 * (0.5 + torch.log(std_dev) - std_dev.pow(2) - mean.pow(2)).mean()
+        self.kl = -0.5 * (1 + torch.log(var) - std_dev.pow(2) - mean.pow(2)).mean()
         
         x *= 0.18215
         

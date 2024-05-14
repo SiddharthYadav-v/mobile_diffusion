@@ -8,8 +8,9 @@ from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normal
 
 from torch.utils.data import DataLoader
 from torch import nn
-from torch import randn, save, load, no_grad
+from torch import randn, save, load, no_grad, randint
 from torch.optim import Adam
+from md.diffusion import DDPM
 
 from tqdm import tqdm
 
@@ -71,6 +72,8 @@ if __name__ == "__main__":
         print ("encoder.pt not found, not loading")
     except RuntimeError:
         print ("encoder.pt Weight and key mismatch, not loading")
+    for param in encoder.parameters():
+        param.requires_grad_(False)
     
     decoder = Decoder().to(device)
     try:
@@ -79,9 +82,22 @@ if __name__ == "__main__":
         print ("decoder.pt not found, not loading")
     except RuntimeError:
         print ("decoder.pt Weight and key mismatch, not loading")
+    for param in decoder.parameters():
+        param.requires_grad_(False)
     
-    opt = Adam(list(encoder.parameters()) + list(decoder.parameters()), lr = lr)
+    ddpm = DDPM(4, 1000, 512, 128).to(device)
+    try:
+        ddpm.load_state_dict(load("ddpm.pt"))
+    except FileNotFoundError:
+        print ("ddpm.pt not found, not loading")
+    except RuntimeError:
+        print ("ddpm.pt Weight and key mismatch, not loading")
+    
+    opt = Adam(ddpm.parameters(), lr = lr)
     loss_fn = nn.MSELoss()
+    
+    num_params = sum(p.numel() for p in ddpm.parameters())
+    print ("Number of parameters in model:", num_params)
 
     for epoch in range(epochs):
         with tqdm(loader, unit = "batch") as iterator:
@@ -89,29 +105,18 @@ if __name__ == "__main__":
                 iterator.set_description(f"{epoch + 1}")
                 img = img.to(device)
                 noise = randn(img.shape[0], 4, img_size // 8, img_size // 8).to(device)
+                t = randint(0, 999, (img.shape[0],)).to(device)
 
                 opt.zero_grad(set_to_none = True)
                 enc = encoder(img, noise)
+                noise = randn(img.shape[0], 4, img_size // 8, img_size // 8).to(device)
+                eps = ddpm(enc, t, noise)
                 dec = decoder(enc)
 
-                kl = encoder.kl
-                mse = loss_fn(dec, img)
+                loss = loss_fn(eps, noise)
 
-                loss = 0.00001 * kl + mse
                 loss.backward()
                 opt.step()
-                iterator.set_postfix(loss = loss.item(), kl = kl.item(), mse = mse.item())
+                iterator.set_postfix(loss = loss.item())
                 
-        save(encoder.state_dict(), "encoder.pt")
-        save(decoder.state_dict(), "decoder.pt")
-        
-        with no_grad():
-            img, _ = next(iter(loader))
-            _, ax = plt.subplots(1, 2, figsize = (8, 16))
-            noise = randn(img.shape[0], 4, img.shape[2] // 8, img.shape[3] // 8).to(device)
-            enc = encoder(img.to(device), noise)
-            dec = decoder(enc)
-            ax[0].imshow((img[0].cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-            ax[1].imshow((dec[0].cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-            plt.savefig("reconstruction.png")
-            plt.close()
+        save(ddpm.state_dict(), "ddpm.pt")
