@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 
 from os.path import exists
 
+from cv2 import cvtColor, COLOR_RGB2BGR, imwrite, VideoWriter
+
 if __name__ == "__main__":
     device = "cuda:2"
     transforms = [
@@ -35,12 +37,15 @@ if __name__ == "__main__":
     print ("Total parameters :", total_params)
 
     with no_grad():
+        result = VideoWriter("ddpm.avi", VideoWriter.fourcc(*"XVID"), 60, (256, 256), True)
         noise = randn((1, 4, 32, 32)).to(device) * 0.18215
         img = ddpm.sample(noise, device)
-        dec = decoder(img)
-        disp = dec[0]
-        disp -= minimum(disp)
-        disp /= maximum(disp)
-        plt.imshow(disp.cpu().numpy().transpose(1, 2, 0))
-        plt.savefig("ddpm.png")
-        plt.close()
+        for img_ in img:
+            dec = decoder(img_)
+            disp = dec[0]
+            disp -= minimum(disp)
+            disp *= 255 / maximum(disp)
+            disp = disp.cpu().numpy().transpose(1, 2, 0).astype("uint8")
+            disp = cvtColor(disp, COLOR_RGB2BGR)
+            result.write(disp)
+        imwrite("ddpm.png", disp)
