@@ -4,9 +4,9 @@ from md.decoder import Decoder
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normalize, ToTensor
 
-from torch import randn, load, no_grad, randint
+from torch import randn, load, no_grad, randint, cat, min as minimum, max as maximum
 
-import matplotlib.pyplot as plt
+from cv2 import imwrite, cvtColor, COLOR_RGB2BGR
 
 from os.path import exists
 
@@ -26,14 +26,15 @@ if __name__ == "__main__":
     decoder = Decoder().to(device)
     if exists("decoder.pt"):
         decoder.load_state_dict(load("decoder.pt", map_location = device))
-
+        
     with no_grad():
         img, _ = dataset[randint(0, len(dataset) - 1, (1,))]
-        _, ax = plt.subplots(1, 2, figsize = (8, 16))
-        noise = randn((1, 4, 32, 32)).to(device)
+        noise = randn(1, 4, 32, 32).to(device)
         enc = encoder(img.unsqueeze(0).to(device), noise)
         dec = decoder(enc)
-        ax[0].imshow((img.cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-        ax[1].imshow((dec[0].cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-        plt.savefig("reconstruction.png")
-        plt.close()
+        save_img = cat([img.to(device), dec[0]], dim = -1)
+        save_img -= minimum(save_img)
+        save_img *= 255 / maximum(save_img)
+        save_img = save_img.cpu().numpy().transpose(1, 2, 0).astype("uint8")
+        save_img = cvtColor(save_img, COLOR_RGB2BGR)
+        imwrite("reconstruction.png", save_img)

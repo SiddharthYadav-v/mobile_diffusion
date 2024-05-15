@@ -186,8 +186,7 @@ class DDPM(nn.Module):
         return eps
 
     def sample(self, X, device):
-        res = []
-        for t in trange(300, 0, -1):
+        for t in trange(1000, 0, -1):
             z = torch.randn(*X.shape) if t > 1 else torch.zeros(*X.shape)
             alpha_t = self.forw.alphas[t - 1].to(device)
             alpha_bar_t = self.forw.alpha_bars[t - 1].to(device)
@@ -197,5 +196,4 @@ class DDPM(nn.Module):
             sigma_t = torch.sqrt(beta_bar_t)
             time_tensor = (torch.ones(X.shape[0]) * (t - 1)).to(device).long()
             X = 1 / torch.sqrt(alpha_t) * (X - (1 - alpha_t) / torch.sqrt(1 - alpha_bar_t) * self.back(X, time_tensor)) + sigma_t * z.to(device)
-            res.append(X)
-        return res
+        return X

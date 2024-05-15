@@ -8,12 +8,12 @@ from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normal
 
 from torch.utils.data import DataLoader
 from torch import nn
-from torch import randn, save, load, no_grad
+from torch import randn, save, load, no_grad, cat, min as minimum, max as maximum
 from torch.optim import Adam
 
 from tqdm import tqdm
 
-import matplotlib.pyplot as plt
+from cv2 import imwrite, cvtColor, COLOR_RGB2BGR
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -42,6 +42,12 @@ if __name__ == "__main__":
                         help = "Learning rate",
                         type = float,
                         default = 1e-5)
+    parser.add_argument("--save_encoder_as",
+                        help = "Filename to save encoder",
+                        default = "encoder.pt")
+    parser.add_argument("--save_decoder_as",
+                        help = "Filename to save decoder",
+                        default = "decoder.pt")
     
     args = parser.parse_args()
 
@@ -52,6 +58,8 @@ if __name__ == "__main__":
     epochs = args.epochs
     device = args.device
     lr = args.lr
+    save_encoder_as = args.save_encoder_as
+    save_decoder_as = args.save_decoder_as
 
     transforms = [
         ToTensor(),
@@ -66,19 +74,19 @@ if __name__ == "__main__":
     
     encoder = Encoder().to(device)
     try:
-        encoder.load_state_dict(load("encoder.pt"))
+        encoder.load_state_dict(load(save_encoder_as))
     except FileNotFoundError:
-        print ("encoder.pt not found, not loading")
+        print (f"{save_encoder_as} not found, not loading")
     except RuntimeError:
-        print ("encoder.pt Weight and key mismatch, not loading")
+        print (f"{save_encoder_as} Weight and key mismatch, not loading")
     
     decoder = Decoder().to(device)
     try:
-        decoder.load_state_dict(load("decoder.pt"))
+        decoder.load_state_dict(load(save_decoder_as))
     except FileNotFoundError:
-        print ("decoder.pt not found, not loading")
+        print (f"{save_decoder_as} not found, not loading")
     except RuntimeError:
-        print ("decoder.pt Weight and key mismatch, not loading")
+        print (f"{save_decoder_as} Weight and key mismatch, not loading")
     
     opt = Adam(list(encoder.parameters()) + list(decoder.parameters()), lr = lr)
     loss_fn = nn.MSELoss()
@@ -102,16 +110,17 @@ if __name__ == "__main__":
                 opt.step()
                 iterator.set_postfix(loss = loss.item(), kl = kl.item(), mse = mse.item())
                 
-        save(encoder.state_dict(), "encoder.pt")
-        save(decoder.state_dict(), "decoder.pt")
+        save(encoder.state_dict(), save_encoder_as)
+        save(decoder.state_dict(), save_decoder_as)
         
         with no_grad():
             img, _ = next(iter(loader))
-            _, ax = plt.subplots(1, 2, figsize = (8, 16))
             noise = randn(img.shape[0], 4, img.shape[2] // 8, img.shape[3] // 8).to(device)
             enc = encoder(img.to(device), noise)
             dec = decoder(enc)
-            ax[0].imshow((img[0].cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-            ax[1].imshow((dec[0].cpu().numpy().transpose(1, 2, 0) + 1.0) / 2.0)
-            plt.savefig("reconstruction.png")
-            plt.close()
+            save_img = cat([img[0].to(device), dec[0]], dim = -1)
+            save_img -= minimum(save_img)
+            save_img *= 255 / maximum(save_img)
+            save_img = save_img.cpu().numpy().transpose(1, 2, 0).astype("uint8")
+            save_img = cvtColor(save_img, COLOR_RGB2BGR)
+            imwrite("reconstruction.png", save_img)

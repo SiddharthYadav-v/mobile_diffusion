@@ -8,7 +8,7 @@ from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normal
 
 from torch.utils.data import DataLoader
 from torch import nn
-from torch import randn, save, load, no_grad, randint
+from torch import randn, save, load, randint
 from torch.optim import Adam
 from md.diffusion import DDPM
 
@@ -43,6 +43,9 @@ if __name__ == "__main__":
                         help = "Learning rate",
                         type = float,
                         default = 1e-5)
+    parser.add_argument("--save_as",
+                        help = "Filename to save model",
+                        default = "ddpm.pt")
     
     args = parser.parse_args()
 
@@ -53,6 +56,7 @@ if __name__ == "__main__":
     epochs = args.epochs
     device = args.device
     lr = args.lr
+    save_as = args.save_as
 
     transforms = [
         ToTensor(),
@@ -87,7 +91,7 @@ if __name__ == "__main__":
     
     ddpm = DDPM(4, 1000, 512, 128).to(device)
     try:
-        ddpm.load_state_dict(load("ddpm.pt"))
+        ddpm.load_state_dict(load(save_as))
     except FileNotFoundError:
         print ("ddpm.pt not found, not loading")
     except RuntimeError:
@@ -119,4 +123,4 @@ if __name__ == "__main__":
                 opt.step()
                 iterator.set_postfix(loss = loss.item())
                 
-        save(ddpm.state_dict(), "ddpm.pt")
+        save(ddpm.state_dict(), save_as)
