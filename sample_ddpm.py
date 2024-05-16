@@ -1,42 +1,76 @@
-from md.encoder import Encoder
+from md.clip import CLIP
 from md.decoder import Decoder
 from md.diffusion import DDPM
 
-from torchvision.datasets import ImageFolder
-from torchvision.transforms import Compose, Resize, RandomHorizontalFlip, Normalize, ToTensor
+from torch import randn, load, no_grad, min as minimum, max as maximum, randint
 
-from torch import randn, load, no_grad, min as minimum, max as maximum
+from cv2 import cvtColor, COLOR_RGB2BGR, imwrite
 
-from os.path import exists
-
-from cv2 import cvtColor, COLOR_RGB2BGR, imwrite, VideoWriter
+from argparse import ArgumentParser
 
 if __name__ == "__main__":
-    device = "cuda:3"
-    transforms = [
-        ToTensor(),
-        Resize((256, 256)),
-        Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-        RandomHorizontalFlip()
-    ]
-
-    dataset = ImageFolder("data/celeba", Compose(transforms))
-    encoder = Encoder().to(device)
-    if exists("encoder.pt"):
-        encoder.load_state_dict(load("encoder.pt", map_location = device))
+    parser = ArgumentParser()
+    parser.add_argument("text_prompt",
+                        help = "Text prompt to use for sampling")
+    parser.add_argument("--num_steps",
+                        help = "Number of steps in DDPM sampling",
+                        type = int,
+                        default = 1000)
+    parser.add_argument("--num_images",
+                        help = "Number of images to sample",
+                        type = int,
+                        default = 1)
+    parser.add_argument("--device",
+                        help = "Which device to use for sampling",
+                        default = "cpu")
+    parser.add_argument("--load_decoder_from",
+                        help = "File to load VAE decoder",
+                        default = "decoder.pt")
+    parser.add_argument("--load_ddpm_from",
+                        help = "File to load DDPM",
+                        default = "ddpm.pt")
+    
+    args = parser.parse_args()
+    
+    prompt = args.text_prompt
+    num_steps = args.num_steps
+    num_images = args.num_images
+    device = args.device
+    load_decoder_from = args.load_decoder_from
+    load_ddpm_from = args.load_ddpm_from
+    
     decoder = Decoder().to(device)
-    if exists("decoder.pt"):
-        decoder.load_state_dict(load("decoder.pt", map_location = device))
+    try:
+        decoder.load_state_dict(load(load_decoder_from))
+    except FileNotFoundError:
+        print (f"{load_decoder_from} not found, not loading")
+    except RuntimeError:
+        print (f"{load_decoder_from} Weight and key mismatch, not loading")
+    for param in decoder.parameters():
+        param.requires_grad_(False)
+    
     ddpm = DDPM(4, 1000, 512, 128).to(device)
-    if exists("ddpm.pt"):
-        ddpm.load_state_dict(load("ddpm.pt", map_location = device))
+    try:
+        ddpm.load_state_dict(load(load_ddpm_from))
+    except FileNotFoundError:
+        print (f"{load_ddpm_from} not found, not loading")
+    except RuntimeError:
+        print (f"{load_ddpm_from} Weight and key mismatch, not loading")
+    for param in ddpm.parameters():
+        param.requires_grad_(False)
         
-    total_params = sum(param.numel() for param in encoder.parameters()) + sum(param.numel() for param in decoder.parameters()) + sum(param.numel() for param in ddpm.parameters())
+    clip = CLIP().to(device)
+    for param in clip.parameters():
+        param.requires_grad_(False)
+        
+    total_params = sum(param.numel() for param in decoder.parameters()) + sum(param.numel() for param in ddpm.parameters()) + sum(param.numel() for param in clip.parameters())
     print ("Total parameters :", total_params)
 
     with no_grad():
-        noise = randn((1, 4, 32, 32)).to(device) * 0.85
-        img = ddpm.sample(noise, device)
+        noise = randn((num_images, 4, 32, 32)).to(device)
+        tok = randint(0, 49407, (num_images, 77,)).to(device)
+        emb = clip(tok)
+        img = ddpm.sample(noise, emb, num_steps, device)
         dec = decoder(img)
         disp = dec[0]
         disp -= minimum(disp)

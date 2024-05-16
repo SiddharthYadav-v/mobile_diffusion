@@ -3,10 +3,33 @@ from torch import nn
 from torch.nn import functional as F
 
 from .decoder import SelfAttentionBlock
+from .attention import CrossAttention
 
 import math
 
 from tqdm import trange
+
+class CrossAttentionBlock(nn.Module):
+    
+    def __init__(self, channels : int, d_context : int = 768):
+        super().__init__()
+        self.group_norm = nn.GroupNorm(32, channels)
+        self.layer_norm = nn.LayerNorm(d_context)
+        self.attention = CrossAttention(4, channels, d_context, True, False)
+        
+    def forward(self, x : torch.Tensor, y : torch.Tensor) -> torch.Tensor:
+        residue = x
+        x = self.group_norm(x)
+        y = self.layer_norm(y)
+        
+        n, c, h, w = x.shape
+        x = x.view(n, c, h * w)
+        x = x.transpose(-1, -2)
+        x = self.attention(x, y)
+        x = x.transpose(-1, -2)
+        x = x.view(n, c, h, w)
+        
+        return x + residue
 
 class ForwardDiffusion(nn.Module):
     
@@ -97,10 +120,12 @@ class DownSample(nn.Module):
 
 class SwitchSequential(nn.Sequential):
     
-    def forward(self, X : torch.Tensor, temb : torch.Tensor) -> torch.Tensor:
+    def forward(self, X : torch.Tensor, temb : torch.Tensor, y : torch.Tensor) -> torch.Tensor:
         for layer in self:
             if isinstance(layer, ResidualBlock):
                 X = layer(X, temb)
+            elif isinstance(layer, CrossAttentionBlock):
+                X = layer(X, y)
             else:
                 X = layer(X)
         return X
@@ -122,53 +147,54 @@ class UNET(nn.Module):
     def __init__(self, in_channels : int, time_dim : int, d_model : int, d_time : int):
         super().__init__()
         self.time_embedding = TimeEncoding(time_dim, d_model, d_time)
-        self.head = nn.Conv2d(in_channels, 256, kernel_size = 3, stride = 1, padding = 1)
+        self.head = nn.Conv2d(in_channels, 128, kernel_size = 3, stride = 1, padding = 1)
         self.encoders = nn.ModuleList([
-            SwitchSequential(ResidualBlock(256, 256, d_time)),
+            SwitchSequential(ResidualBlock(128, 128, d_time)),
+            DownSample(128, 128),
+            SwitchSequential(ResidualBlock(128, 256, d_time), CrossAttentionBlock(256)),
             DownSample(256, 256),
-            SwitchSequential(ResidualBlock(256, 512, d_time), SelfAttentionBlock(512)),
+            SwitchSequential(ResidualBlock(256, 512, d_time), SelfAttentionBlock(512), CrossAttentionBlock(512)),
             DownSample(512, 512),
-            SwitchSequential(ResidualBlock(512, 1024, d_time), SelfAttentionBlock(1024)),
-            DownSample(1024, 1024),
-            SwitchSequential(ResidualBlock(1024, 1024, d_time), SelfAttentionBlock(1024)),
-            DownSample(1024, 1024)
+            SwitchSequential(ResidualBlock(512, 512, d_time), SelfAttentionBlock(512), CrossAttentionBlock(512)),
+            DownSample(512, 512)
         ])
         self.bottle_neck = SwitchSequential(
-            ResidualBlock(1024, 1024, d_time),
-            SelfAttentionBlock(1024),
-            ResidualBlock(1024, 1024, d_time)
+            ResidualBlock(512, 512, d_time),
+            SelfAttentionBlock(512),
+            CrossAttentionBlock(512),
+            ResidualBlock(512, 512, d_time)
         )
         self.decoders = nn.ModuleList([
-            UpSample(1024, 1024),
-            SwitchSequential(ResidualBlock(2048, 1024, d_time), SelfAttentionBlock(1024)),
-            UpSample(1024, 1024),
-            SwitchSequential(ResidualBlock(2048, 1024, d_time), SelfAttentionBlock(1024)),
-            UpSample(1024, 1024),
-            SwitchSequential(ResidualBlock(1536, 768, d_time), SelfAttentionBlock(768)),
-            UpSample(768, 768),
-            SwitchSequential(ResidualBlock(1024, 512, d_time))
+            UpSample(512, 512),
+            SwitchSequential(ResidualBlock(1024, 512, d_time), SelfAttentionBlock(512), CrossAttentionBlock(512)),
+            UpSample(512, 512),
+            SwitchSequential(ResidualBlock(1024, 512, d_time), SelfAttentionBlock(512), CrossAttentionBlock(512)),
+            UpSample(512, 512),
+            SwitchSequential(ResidualBlock(768, 384, d_time), CrossAttentionBlock(384)),
+            UpSample(384, 384),
+            SwitchSequential(ResidualBlock(512, 256, d_time))
         ])
         self.tail = nn.Sequential(
-            nn.GroupNorm(32, 512),
-            nn.Conv2d(512, in_channels, kernel_size = 3, stride = 1, padding = 1)
+            nn.GroupNorm(32, 256),
+            nn.Conv2d(256, in_channels, kernel_size = 3, stride = 1, padding = 1)
         )
         
-    def forward(self, X : torch.Tensor, t : torch.LongTensor) -> torch.Tensor:
+    def forward(self, X : torch.Tensor, t : torch.LongTensor, y : torch.Tensor) -> torch.Tensor:
         temb = self.time_embedding(t)
         X = self.head(X)
         enc_outputs = []
         for layer in self.encoders:
             if isinstance(layer, SwitchSequential):
-                X = layer(X, temb)
+                X = layer(X, temb, y)
                 enc_outputs.append(X.clone())
             else:
                 X = layer(X)
-        X = self.bottle_neck(X, temb)
+        X = self.bottle_neck(X, temb, y)
         for layer in self.decoders:
             if isinstance(layer, UpSample):
                 X = layer(X)
             else:
-                X = layer(torch.cat([enc_outputs.pop(), X], dim = 1), temb)
+                X = layer(torch.cat([enc_outputs.pop(), X], dim = 1), temb, y)
         X = self.tail(X)
         return X
 
@@ -176,17 +202,16 @@ class DDPM(nn.Module):
     
     def __init__(self, in_channels, time_dim, d_model, d_time):
         super().__init__()
-        self.time_steps = time_dim
         self.forw = ForwardDiffusion(1e-4, 0.02, time_dim)
         self.back = UNET(in_channels, time_dim, d_model, d_time)
 
-    def forward(self, X, t, noise):
+    def forward(self, X, t, emb, noise):
         X = self.forw(X, t, noise)
-        eps = self.back(X, t)
+        eps = self.back(X, t, emb)
         return eps
 
-    def sample(self, X, device):
-        for t in trange(1000, 0, -1):
+    def sample(self, X, emb, num_steps, device):
+        for t in trange(num_steps, 0, -1):
             z = torch.randn(*X.shape) if t > 1 else torch.zeros(*X.shape)
             alpha_t = self.forw.alphas[t - 1].to(device)
             alpha_bar_t = self.forw.alpha_bars[t - 1].to(device)
@@ -195,5 +220,5 @@ class DDPM(nn.Module):
             beta_bar_t = ((1 - prev_alpha_bar_t)/(1 - alpha_bar_t)) * beta_t
             sigma_t = torch.sqrt(beta_bar_t)
             time_tensor = (torch.ones(X.shape[0]) * (t - 1)).to(device).long()
-            X = 1 / torch.sqrt(alpha_t) * (X - (1 - alpha_t) / torch.sqrt(1 - alpha_bar_t) * self.back(X, time_tensor)) + sigma_t * z.to(device)
+            X = 1 / torch.sqrt(alpha_t) * (X - (1 - alpha_t) / torch.sqrt(1 - alpha_bar_t) * self.back(X, time_tensor, emb)) + sigma_t * z.to(device)
         return X

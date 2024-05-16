@@ -10,8 +10,29 @@ from cv2 import imwrite, cvtColor, COLOR_RGB2BGR
 
 from os.path import exists
 
+from argparse import ArgumentParser
+
 if __name__ == "__main__":
-    device = "cuda:2"
+    parser = ArgumentParser()
+    parser.add_argument("data_folder",
+                        help = "Folder to load data for encoding")
+    parser.add_argument("--device",
+                        help = "Which device to use for sampling",
+                        default = "cpu")
+    parser.add_argument("--load_decoder_from",
+                        help = "File to load VAE decoder",
+                        default = "decoder.pt")
+    parser.add_argument("--load_encoder_from",
+                        help = "File to load VAE encoder",
+                        default = "encoder.pt")
+    
+    args = parser.parse_args()
+    
+    data_folder = args.data_folder
+    device = args.device
+    load_decoder_from = args.load_decoder_from
+    load_encoder_from = args.load_encoder_from
+    
     transforms = [
         ToTensor(),
         Resize((256, 256)),
@@ -19,13 +40,21 @@ if __name__ == "__main__":
         RandomHorizontalFlip()
     ]
 
-    dataset = ImageFolder("data/CelebAMask-HQ/CelebA-HQ-img", Compose(transforms))
+    dataset = ImageFolder(data_folder, Compose(transforms))
     encoder = Encoder().to(device)
-    if exists("encoder.pt"):
-        encoder.load_state_dict(load("encoder.pt", map_location = device))
+    try:
+        encoder.load_state_dict(load(load_encoder_from))
+    except FileNotFoundError:
+        print (f"{load_encoder_from} not found, not loading")
+    except RuntimeError:
+        print (f"{load_encoder_from} Weight and key mismatch, not loading")
     decoder = Decoder().to(device)
-    if exists("decoder.pt"):
-        decoder.load_state_dict(load("decoder.pt", map_location = device))
+    try:
+        decoder.load_state_dict(load(load_decoder_from))
+    except FileNotFoundError:
+        print (f"{load_decoder_from} not found, not loading")
+    except RuntimeError:
+        print (f"{load_decoder_from} Weight and key mismatch, not loading")
         
     with no_grad():
         img, _ = dataset[randint(0, len(dataset) - 1, (1,))]
